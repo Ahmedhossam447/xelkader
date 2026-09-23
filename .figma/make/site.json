@@ -1,0 +1,10 @@
+{
+  "description": "Engage users with an interactive lucky wheel offering discounts and unique experiences, enhancing customer loyalty and excitement for travel and workshops.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
