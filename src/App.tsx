@@ -460,7 +460,7 @@ export default function App() {
   }, [rotation, items, currentUser, draw])
 
   const spin = useCallback(() => {
-    if (spinning || available.length === 0) return
+    if (spinning || available.length === 0 || (hasWon && !isWhitelistedUser(currentUser))) return
 
     // 1. Pick winner using weighted probability:
     const trapItem = available.find(it => it.id === 4)
@@ -555,7 +555,7 @@ export default function App() {
       }
     }
     rafRef.current = requestAnimationFrame(animate)
-  }, [spinning, available, rotation, trapProbability, trapUnlimited])
+  }, [spinning, available, rotation, trapProbability, trapUnlimited, hasWon, currentUser])
 
   useEffect(() => () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }, [])
 
@@ -759,8 +759,90 @@ export default function App() {
             </button>
           )}
         </div>
+      ) : hasWon && !isWhitelistedUser(currentUser) ? (
+        /* Winner card state - wheel is completely gone! */
+        <div className="w-full max-w-sm mt-3 z-10">
+          <div
+            className="modal-animate rounded-3xl p-6 sm:p-7 shadow-2xl text-center space-y-4"
+            style={{
+              background: 'rgba(20, 35, 25, 0.85)',
+              backdropFilter: 'blur(12px)',
+              border: '2px solid rgba(40, 168, 74, 0.5)',
+              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
+            }}
+          >
+            <div className="text-5xl sm:text-6xl mb-1">🎁</div>
+
+            <h2 className="text-xl sm:text-2xl font-black text-amber-400">
+              أهلاً يا {currentUser.name}! 🎉
+            </h2>
+
+            <p className="text-xs text-gray-300">
+              لقد شاركت بالفعل في السحب وجائزتك هي:
+            </p>
+
+            {/* Won Prize Box */}
+            <div
+              className="rounded-2xl p-4 border"
+              style={{
+                background: 'rgba(255, 255, 255, 0.08)',
+                borderColor: 'rgba(40, 168, 74, 0.5)',
+              }}
+            >
+              <p className="text-lg font-bold text-white leading-relaxed">
+                {result?.label || currentUser.Gifts || currentUser.gift || 'جائزتك القيّمة'}
+              </p>
+            </div>
+
+            {/* Expiration Notice */}
+            <div
+              className="rounded-2xl py-3 px-4 text-center border"
+              style={{
+                background: 'rgba(226, 165, 27, 0.12)',
+                borderColor: 'rgba(226, 165, 27, 0.45)',
+              }}
+            >
+              <p className="text-sm font-black text-amber-300">
+                ⏳ الجائزة صالحة حتى 1 ديسمبر فقط
+              </p>
+            </div>
+
+            {/* Phone */}
+            <p className="text-xs text-gray-400">
+              📱 مسجل برقم: <span className="font-mono text-amber-300 font-bold">{currentUser.PhoneNumber}</span>
+            </p>
+
+            {/* Actions */}
+            <div className="pt-2 flex flex-col gap-2.5">
+              <button
+                onClick={() => setShowResult(true)}
+                className="w-full py-3 px-4 rounded-full font-bold text-sm text-white transition-all active:scale-95 shadow-lg flex items-center justify-center gap-2 cursor-pointer"
+                style={{
+                  background: 'linear-gradient(135deg, #28A84A 0%, #1a6e30 100%)',
+                  boxShadow: '0 4px 18px rgba(40,168,74,0.5)',
+                }}
+              >
+                <span>🎊</span>
+                <span>عرض كارت الجائزة</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setCurrentUser(null)
+                  sessionStorage.removeItem(STORAGE_KEY_USER)
+                  setResult(null)
+                  setHasWon(false)
+                  setIsReturningUser(false)
+                }}
+                className="text-xs text-gray-400 hover:text-white underline py-1 cursor-pointer transition-colors"
+              >
+                تسجيل برقم هاتف آخر
+              </button>
+            </div>
+          </div>
+        </div>
       ) : (
-        /* Wheel mode */
+        /* Wheel mode (Only visible before user wins) */
         <div className="flex flex-col items-center mt-2">
           {/* Top Pointer Triangle */}
           <div
@@ -793,59 +875,26 @@ export default function App() {
             onClick={!spinning ? spin : undefined}
           />
 
-          {/* Spin button or Claimed Prize button */}
-          {hasWon && !isWhitelistedUser(currentUser) ? (
-            <div className="mt-6 flex flex-col items-center gap-2.5">
-              <button
-                onClick={() => setShowResult(true)}
-                className="font-black text-sm sm:text-base rounded-full transition-all active:scale-95 flex items-center justify-center gap-2"
-                style={{
-                  padding: '14px 36px',
-                  background: 'linear-gradient(135deg, #28A84A 0%, #1a6e30 100%)',
-                  color: '#fff',
-                  border: 'none',
-                  boxShadow: '0 4px 20px rgba(40,168,74,0.55)',
-                  cursor: 'pointer',
-                }}
-              >
-                <span>🎁</span>
-                <span>عرض جائزتي (صالحة حتى 1 ديسمبر)</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  setCurrentUser(null)
-                  sessionStorage.removeItem(STORAGE_KEY_USER)
-                  setResult(null)
-                  setHasWon(false)
-                  setIsReturningUser(false)
-                }}
-                className="text-xs text-gray-400 hover:text-white underline pt-1 cursor-pointer transition-colors"
-              >
-                تسجيل برقم هاتف آخر
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={spin}
-              disabled={spinning}
-              className="mt-6 font-black text-lg rounded-full transition-all active:scale-95 disabled:cursor-not-allowed"
-              style={{
-                padding: '14px 48px',
-                background: spinning
-                  ? 'rgba(80,80,80,0.6)'
-                  : 'linear-gradient(135deg, #28A84A 0%, #1a6e30 100%)',
-                color: '#fff',
-                border: 'none',
-                boxShadow: spinning ? 'none' : '0 4px 20px rgba(40,168,74,0.55)',
-                cursor: spinning ? 'default' : 'pointer',
-                opacity: spinning ? 0.6 : 1,
-                letterSpacing: '0.02em',
-              }}
-            >
-              {spinning ? '⏳ جاري الدوران...' : '🎯 دور دلوقتي!'}
-            </button>
-          )}
+          {/* Spin button */}
+          <button
+            onClick={spin}
+            disabled={spinning}
+            className="mt-6 font-black text-lg rounded-full transition-all active:scale-95 disabled:cursor-not-allowed"
+            style={{
+              padding: '14px 48px',
+              background: spinning
+                ? 'rgba(80,80,80,0.6)'
+                : 'linear-gradient(135deg, #28A84A 0%, #1a6e30 100%)',
+              color: '#fff',
+              border: 'none',
+              boxShadow: spinning ? 'none' : '0 4px 20px rgba(40,168,74,0.55)',
+              cursor: spinning ? 'default' : 'pointer',
+              opacity: spinning ? 0.6 : 1,
+              letterSpacing: '0.02em',
+            }}
+          >
+            {spinning ? '⏳ جاري الدوران...' : '🎯 دور دلوقتي!'}
+          </button>
 
           {/* Remaining count hint */}
           <p className="mt-2.5 text-xs" style={{ color: 'rgba(193,211,161,0.6)' }}>
