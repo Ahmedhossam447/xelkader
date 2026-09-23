@@ -1,6 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import logoImg from '@/imports/Logo.png'
-import { supabase, type PersonRecord } from './supabase'
+import {
+  supabase,
+  type PersonRecord,
+  findParticipantByPhone,
+  saveParticipantGift,
+} from './supabase'
 
 interface WheelItem {
   id: number
@@ -173,6 +178,17 @@ export default function App() {
   const [inputPhone, setInputPhone] = useState('')
   const [registerError, setRegisterError] = useState<string | null>(null)
   const [isRegistering, setIsRegistering] = useState(false)
+  const [isReturningUser, setIsReturningUser] = useState(false)
+  const [hasWon, setHasWon] = useState<boolean>(() => {
+    try {
+      const saved = sessionStorage.getItem(STORAGE_KEY_USER)
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        if (parsed.Gifts || parsed.gift || parsed.Gift) return true
+      }
+    } catch (e) {}
+    return false
+  })
 
   // Wheel Items
   const [items, setItems] = useState<WheelItem[]>(() => {
@@ -205,10 +221,7 @@ export default function App() {
   const [trapUnlimited, setTrapUnlimited] = useState<boolean>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_CONFIG)
-      if (saved) {
-        const parsed = JSON.parse(saved)
-        if (typeof parsed.trapUnlimited === 'boolean') return parsed.trapUnlimited
-      }
+      if (typeof parsed.trapUnlimited === 'boolean') return parsed.trapUnlimited
     } catch (e) {}
     return true
   })
@@ -235,6 +248,40 @@ export default function App() {
   const [editingItemId, setEditingItemId] = useState<number | null>(null)
   const [logoClicks, setLogoClicks] = useState(0)
   const clickTimerRef = useRef<number | null>(null)
+
+  // Whitelist helper for unlimited test spins (Moghazy / 01146989133)
+  const isWhitelistedUser = (user: PersonRecord | null) => {
+    if (!user) return false
+    const phone = user.PhoneNumber || ''
+    const name = (user.name || '').toLowerCase()
+    return (
+      phone === '01146989133' ||
+      phone.endsWith('1146989133') ||
+      name === 'moghazy' ||
+      name.includes('مغازي')
+    )
+  }
+
+  // Restore won gift on page refresh if user already has a prize
+  useEffect(() => {
+    if (currentUser) {
+      const existingGift = currentUser.Gifts || currentUser.gift || currentUser.Gift
+      if (existingGift) {
+        setHasWon(true)
+        if (!result) {
+          const matched = items.find(it => it.label === existingGift) || {
+            id: 999,
+            label: existingGift,
+            color: '#28A84A',
+            remaining: 0,
+            textDark: false,
+            wheelLines: [existingGift],
+          }
+          setResult(matched)
+        }
+      }
+    }
+  }, [currentUser, items, result])
 
   // Supabase People list for admin
   const [peopleList, setPeopleList] = useState<PersonRecord[]>([])
@@ -293,7 +340,7 @@ export default function App() {
     }
   }, [showAdminModal, adminTab, fetchPeople])
 
-  // Handle User Registration
+  // Handle User Registration & Login
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault()
     setRegisterError(null)
@@ -322,43 +369,62 @@ export default function App() {
 
     setIsRegistering(true)
     try {
-      // Check if phone number already participated (Skipped for Moghazy / 01146989133)
-      if (!allowDuplicatePhones && !isWhitelisted) {
-        const { data: existing, error: checkError } = await supabase
-          .from('People')
-          .select('id, name')
-          .eq('PhoneNumber', trimmedPhone)
-          .limit(1)
+      if (!isWhitelisted) {
+        // Query Supabase for existing record by phone number
+        const existing = await findParticipantByPhone(trimmedPhone)
 
-        if (!checkError && existing && existing.length > 0) {
-          setRegisterError('رقم الهاتف هذا مسجل بالفعل وشارك في السحب من قبل! 🎉')
-          setIsRegistering(false)
-          return
+        if (existing) {
+          // Returning user: DO NOT show error! Log them in!
+          const wonGift = existing.Gifts || existing.gift || existing.Gift
+
+          const loggedInUser: PersonRecord = {
+            id: existing.id,
+            name: existing.name || trimmedName,
+            PhoneNumber: existing.PhoneNumber || trimmedPhone,
+            Gifts: wonGift,
+            gift: wonGift,
+          }
+          setCurrentUser(loggedInUser)
+          try {
+            sessionStorage.setItem(STORAGE_KEY_USER, JSON.stringify(loggedInUser))
+          } catch (err) {}
+
+          if (wonGift) {
+            // Already has won prize: display it with December 1st expiration notice!
+            setIsReturningUser(true)
+            setHasWon(true)
+            const matched = items.find(it => it.label === wonGift) || {
+              id: 999,
+              label: wonGift,
+              color: '#28A84A',
+              remaining: 0,
+              textDark: false,
+              wheelLines: [wonGift],
+            }
+            setResult(matched)
+            setShowResult(true)
+            setIsRegistering(false)
+            return
+          } else {
+            // Registered earlier without winning yet: allow them to spin
+            setIsReturningUser(false)
+            setHasWon(false)
+            setIsRegistering(false)
+            return
+          }
         }
       }
 
-      // Insert new person into Supabase People table
-      const { data, error } = await supabase
-        .from('People')
-        .insert({
-          name: trimmedName || 'Moghazy',
-          PhoneNumber: trimmedPhone || '01146989133',
-        })
-        .select()
-
-      if (error && !isWhitelisted) {
-        console.error('Supabase insert error:', error)
-        setRegisterError('حدث خطأ أثناء حفظ البيانات، يرجى المحاولة مرة أخرى')
-        setIsRegistering(false)
-        return
+      // New user or whitelisted user
+      const newUser: PersonRecord = {
+        name: trimmedName || 'Moghazy',
+        PhoneNumber: trimmedPhone || '01146989133',
       }
-
-      const registered = data && data[0]
-        ? data[0]
-        : { name: trimmedName || 'Moghazy', PhoneNumber: trimmedPhone || '01146989133' }
-      setCurrentUser(registered)
+      setCurrentUser(newUser)
+      setIsReturningUser(false)
+      setHasWon(false)
       try {
-        sessionStorage.setItem(STORAGE_KEY_USER, JSON.stringify(registered))
+        sessionStorage.setItem(STORAGE_KEY_USER, JSON.stringify(newUser))
       } catch (err) {}
     } catch (err) {
       console.error(err)
@@ -451,6 +517,40 @@ export default function App() {
           return it
         }))
         setResult(winner)
+        setHasWon(true)
+        setIsReturningUser(false)
+
+        // Save won gift to Supabase and update local user session
+        if (currentUser) {
+          const updatedUser: PersonRecord = {
+            ...currentUser,
+            Gifts: winner.label,
+            gift: winner.label,
+          }
+          setCurrentUser(updatedUser)
+          try {
+            sessionStorage.setItem(STORAGE_KEY_USER, JSON.stringify(updatedUser))
+          } catch (e) {}
+
+          // Record gift into Supabase People table
+          saveParticipantGift(
+            currentUser.name,
+            currentUser.PhoneNumber,
+            winner.label,
+            currentUser.id
+          )
+            .then(({ data, error }) => {
+              if (error) {
+                console.error('Error saving winner gift to Supabase:', error)
+              } else if (data && data[0]?.id) {
+                setCurrentUser(prev => (prev ? { ...prev, id: data[0].id } : prev))
+              }
+            })
+            .catch(err => {
+              console.error('Exception in saveParticipantGift:', err)
+            })
+        }
+
         setTimeout(() => setShowResult(true), 350)
       }
     }
@@ -547,7 +647,11 @@ export default function App() {
           دولاب الحظ 🎡
         </h1>
         <p className="text-sm mt-1" style={{ color: '#C1D3A1', opacity: 0.85 }}>
-          {currentUser ? `أهلاً يا ${currentUser.name}! دور وشوف هتاخد إيه 🎉` : 'سجل بياناتك علشان تبدأ تدور وتكسب جوائز!'}
+          {currentUser
+            ? hasWon && !isWhitelistedUser(currentUser)
+              ? `أهلاً يا ${currentUser.name}! جائزتك: ${currentUser.Gifts || currentUser.gift || result?.label || ''} 🎉`
+              : `أهلاً يا ${currentUser.name}! دور وشوف هتاخد إيه 🎉`
+            : 'سجل بياناتك علشان تبدأ تدور وتكسب جوائز!'}
         </p>
       </div>
 
@@ -689,26 +793,59 @@ export default function App() {
             onClick={!spinning ? spin : undefined}
           />
 
-          {/* Spin button */}
-          <button
-            onClick={spin}
-            disabled={spinning}
-            className="mt-6 font-black text-lg rounded-full transition-all active:scale-95 disabled:cursor-not-allowed"
-            style={{
-              padding: '14px 48px',
-              background: spinning
-                ? 'rgba(80,80,80,0.6)'
-                : 'linear-gradient(135deg, #28A84A 0%, #1a6e30 100%)',
-              color: '#fff',
-              border: 'none',
-              boxShadow: spinning ? 'none' : '0 4px 20px rgba(40,168,74,0.55)',
-              cursor: spinning ? 'default' : 'pointer',
-              opacity: spinning ? 0.6 : 1,
-              letterSpacing: '0.02em',
-            }}
-          >
-            {spinning ? '⏳ جاري الدوران...' : '🎯 دور دلوقتي!'}
-          </button>
+          {/* Spin button or Claimed Prize button */}
+          {hasWon && !isWhitelistedUser(currentUser) ? (
+            <div className="mt-6 flex flex-col items-center gap-2.5">
+              <button
+                onClick={() => setShowResult(true)}
+                className="font-black text-sm sm:text-base rounded-full transition-all active:scale-95 flex items-center justify-center gap-2"
+                style={{
+                  padding: '14px 36px',
+                  background: 'linear-gradient(135deg, #28A84A 0%, #1a6e30 100%)',
+                  color: '#fff',
+                  border: 'none',
+                  boxShadow: '0 4px 20px rgba(40,168,74,0.55)',
+                  cursor: 'pointer',
+                }}
+              >
+                <span>🎁</span>
+                <span>عرض جائزتي (صالحة حتى 1 ديسمبر)</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setCurrentUser(null)
+                  sessionStorage.removeItem(STORAGE_KEY_USER)
+                  setResult(null)
+                  setHasWon(false)
+                  setIsReturningUser(false)
+                }}
+                className="text-xs text-gray-400 hover:text-white underline pt-1 cursor-pointer transition-colors"
+              >
+                تسجيل برقم هاتف آخر
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={spin}
+              disabled={spinning}
+              className="mt-6 font-black text-lg rounded-full transition-all active:scale-95 disabled:cursor-not-allowed"
+              style={{
+                padding: '14px 48px',
+                background: spinning
+                  ? 'rgba(80,80,80,0.6)'
+                  : 'linear-gradient(135deg, #28A84A 0%, #1a6e30 100%)',
+                color: '#fff',
+                border: 'none',
+                boxShadow: spinning ? 'none' : '0 4px 20px rgba(40,168,74,0.55)',
+                cursor: spinning ? 'default' : 'pointer',
+                opacity: spinning ? 0.6 : 1,
+                letterSpacing: '0.02em',
+              }}
+            >
+              {spinning ? '⏳ جاري الدوران...' : '🎯 دور دلوقتي!'}
+            </button>
+          )}
 
           {/* Remaining count hint */}
           <p className="mt-2.5 text-xs" style={{ color: 'rgba(193,211,161,0.6)' }}>
@@ -726,7 +863,7 @@ export default function App() {
         >
           {!isNoWin && <Confetti />}
           <div
-            className="modal-animate relative rounded-3xl p-8 max-w-sm w-full text-center shadow-2xl"
+            className="modal-animate relative rounded-3xl p-6 sm:p-8 max-w-sm w-full text-center shadow-2xl"
             style={{
               background: isNoWin
                 ? 'linear-gradient(135deg, #0e2229, #112828)'
@@ -736,27 +873,59 @@ export default function App() {
             }}
             onClick={e => e.stopPropagation()}
           >
-            <div className="text-6xl mb-4">{isNoWin ? '😅' : '🎊'}</div>
+            <div className="text-5xl sm:text-6xl mb-3">
+              {isReturningUser ? '🎁' : isNoWin ? '😅' : '🎊'}
+            </div>
 
-            <h2 className="font-black text-2xl mb-1" style={{ color: isNoWin ? '#C1D3A1' : '#E2A51B' }}>
-              {isNoWin ? `آسفين يا ${currentUser?.name || 'صديقي'}!` : `مبروووك يا ${currentUser?.name || ''}! 🎉`}
+            <h2 className="font-black text-xl sm:text-2xl mb-1" style={{ color: isNoWin ? '#C1D3A1' : '#E2A51B' }}>
+              {isReturningUser
+                ? `أهلاً بك مجدداً يا ${currentUser?.name || 'صديقنا'}! 👋`
+                : isNoWin
+                ? `آسفين يا ${currentUser?.name || 'صديقي'}!`
+                : `مبروووك يا ${currentUser?.name || ''}! 🎉`}
             </h2>
 
-            <p className="text-xs text-gray-300 mb-4">
-              {isNoWin ? 'ملكش نصيب المرة دي، شرفتنا بوجودك 💚' : 'حصلت على:'}
+            <p className="text-xs text-gray-300 mb-3">
+              {isReturningUser
+                ? 'لقد شاركت معنا بالفعل في السحب وجائزتك هي:'
+                : isNoWin
+                ? 'ملكش نصيب المرة دي، شرفتنا بوجودك 💚'
+                : 'حصلت على:'}
             </p>
 
             <div
-              className="rounded-2xl p-4 mb-5"
+              className="rounded-2xl p-4 mb-3"
               style={{
                 background: 'rgba(255,255,255,0.06)',
                 border: `1px solid ${isNoWin ? 'rgba(37,106,116,0.4)' : 'rgba(40,168,74,0.4)'}`,
               }}
             >
-              <p className="text-base font-bold leading-relaxed" style={{ color: '#fff' }}>
+              <p className="text-base sm:text-lg font-bold leading-relaxed" style={{ color: '#fff' }}>
                 {result.label}
               </p>
             </div>
+
+            {/* Expiration Notice (Required on first win AND returning logins) */}
+            {!isNoWin && (
+              <div
+                className="rounded-2xl p-3.5 mb-3 text-center border"
+                style={{
+                  background: 'rgba(226, 165, 27, 0.12)',
+                  borderColor: 'rgba(226, 165, 27, 0.45)',
+                }}
+              >
+                <div className="flex items-center justify-center gap-1.5 text-amber-300 font-bold text-xs mb-1">
+                  <span>⏳</span>
+                  <span>تنبيه هام لصلاحية الجائزة</span>
+                </div>
+                <p className="text-sm font-black text-amber-200">
+                  الجائزة صالحة للاستخدام حتى 1 ديسمبر فقط!
+                </p>
+                <p className="text-[11px] text-gray-300 mt-1 leading-relaxed">
+                  يرجى التوجه للفرع أو التواصل معنا قبل 1 ديسمبر لاستلام واستخدام جائزتك 🎁
+                </p>
+              </div>
+            )}
 
             {currentUser && (
               <p className="text-[11px] text-gray-400 mb-4">
@@ -779,10 +948,10 @@ export default function App() {
                   boxShadow: `0 4px 16px ${isNoWin ? 'rgba(37,106,116,0.5)' : 'rgba(40,168,74,0.5)'}`,
                 }}
               >
-                تمام! 👍
+                {isReturningUser ? 'حسناً، فهمت 👍' : 'تمام! 👍'}
               </button>
 
-              {(currentUser?.PhoneNumber === '01146989133' || currentUser?.name?.toLowerCase().includes('moghazy')) && (
+              {isWhitelistedUser(currentUser) && (
                 <button
                   onClick={() => {
                     closeResult()
@@ -1121,27 +1290,37 @@ export default function App() {
                   </div>
                 ) : (
                   <div className="space-y-1.5">
-                    {filteredPeople.map((person, idx) => (
-                      <div
-                        key={person.id || idx}
-                        className="bg-white/5 border border-white/10 rounded-xl p-2.5 flex items-center justify-between text-xs"
-                      >
-                        <div>
-                          <p className="font-bold text-white">{person.name}</p>
-                          <p className="font-mono text-gray-400 text-[11px] mt-0.5">{person.PhoneNumber}</p>
-                        </div>
-                        {person.created_at && (
-                          <div className="text-left text-[10px] text-gray-400">
-                            {new Date(person.created_at).toLocaleDateString('ar-EG', {
-                              month: 'short',
-                              day: 'numeric',
-                              hour: '2-digit',
-                              minute: '2-digit'
-                            })}
+                    {filteredPeople.map((person, idx) => {
+                      const personGift = person.Gifts || person.gift || person.Gift
+                      return (
+                        <div
+                          key={person.id || idx}
+                          className="bg-white/5 border border-white/10 rounded-xl p-3 flex items-center justify-between text-xs"
+                        >
+                          <div>
+                            <p className="font-bold text-white text-sm">{person.name}</p>
+                            <p className="font-mono text-gray-400 text-xs mt-0.5">{person.PhoneNumber}</p>
+                            {personGift && (
+                              <div className="mt-1">
+                                <span className="inline-block px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 text-[11px] font-bold border border-amber-500/30">
+                                  🎁 {personGift}
+                                </span>
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
-                    ))}
+                          {person.created_at && (
+                            <div className="text-left text-[10px] text-gray-400 shrink-0">
+                              {new Date(person.created_at).toLocaleDateString('ar-EG', {
+                                month: 'short',
+                                day: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
               </div>
