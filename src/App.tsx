@@ -905,24 +905,17 @@ export default function App() {
               </p>
             </div>
 
-            {/* Expiration Notice (Required on first win AND returning logins) */}
+            {/* Expiration Notice */}
             {!isNoWin && (
               <div
-                className="rounded-2xl p-3.5 mb-3 text-center border"
+                className="rounded-2xl py-3 px-4 mb-4 text-center border"
                 style={{
                   background: 'rgba(226, 165, 27, 0.12)',
                   borderColor: 'rgba(226, 165, 27, 0.45)',
                 }}
               >
-                <div className="flex items-center justify-center gap-1.5 text-amber-300 font-bold text-xs mb-1">
-                  <span>⏳</span>
-                  <span>تنبيه هام لصلاحية الجائزة</span>
-                </div>
-                <p className="text-sm font-black text-amber-200">
-                  الجائزة صالحة للاستخدام حتى 1 ديسمبر فقط!
-                </p>
-                <p className="text-[11px] text-gray-300 mt-1 leading-relaxed">
-                  يرجى التوجه للفرع أو التواصل معنا قبل 1 ديسمبر لاستلام واستخدام جائزتك 🎁
+                <p className="text-sm font-black text-amber-300">
+                  ⏳ الجائزة صالحة حتى 1 ديسمبر فقط
                 </p>
               </div>
             )}
