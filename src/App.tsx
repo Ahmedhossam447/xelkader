@@ -529,6 +529,12 @@ export default function App() {
       <div className="mb-2 cursor-pointer transition-transform active:scale-95" onClick={handleLogoTap} title="في الكادر">
         <img
           src={logoImg}
+          onError={(e) => {
+            const target = e.currentTarget as HTMLImageElement
+            if (!target.src.endsWith('/Logo.png')) {
+              target.src = '/Logo.png'
+            }
+          }}
           alt="في الكادر"
           className="object-contain"
           style={{ height: '72px', filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.4))' }}
